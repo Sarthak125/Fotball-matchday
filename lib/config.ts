@@ -27,10 +27,8 @@ export function appTimezone(): string {
   }
 }
 
-export function liveRefreshSeconds(): number {
-  const n = Number(process.env.LIVE_REFRESH_SECONDS);
-  return Number.isFinite(n) && n >= 15 ? Math.floor(n) : 60;
-}
+/** Base path the site is served from (for example /Fotball-matchday on GitHub Pages). */
+export const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
 
 /** Today's date (YYYY-MM-DD) in the app time zone. */
 export function todayIso(tz = appTimezone()): string {

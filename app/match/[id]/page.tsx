@@ -1,46 +1,31 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import AutoRefresh from "@/components/AutoRefresh";
+import ClientTabs from "@/components/ClientTabs";
 import Crest from "@/components/Crest";
-import ErrorNotice from "@/components/ErrorNotice";
 import LocalTime from "@/components/LocalTime";
+import NoData from "@/components/NoData";
 import Pitch from "@/components/Pitch";
 import Rating from "@/components/Rating";
 import StatBar from "@/components/StatBar";
-import TabLinks from "@/components/TabLinks";
-import { getFixture, getHeadToHead, getStandings } from "@/lib/api";
-import { appTimezone, liveRefreshSeconds } from "@/lib/config";
+import { appTimezone } from "@/lib/config";
+import { allFixtures, getFixture, getMeta, getStandings, hasPlayerPage, hasTeamPage } from "@/lib/data";
 import { eventMinute, eventTag, formatLongDate, formatShortDate, matchState, parseRating, signed, statusLabel } from "@/lib/format";
-import type { Fixture } from "@/lib/types";
+import type { Fixture, TeamRef } from "@/lib/types";
 
-export const dynamic = "force-dynamic";
-
-const TABS = [
-  { key: "facts", label: "Facts" },
-  { key: "lineup", label: "Lineup" },
-  { key: "stats", label: "Stats" },
-  { key: "h2h", label: "Head-to-head" },
-  { key: "table", label: "Table" },
-] as const;
-type TabKey = (typeof TABS)[number]["key"];
+export const dynamicParams = false;
 
 const TOP_STATS = ["expected_goals", "Ball Possession", "Total Shots", "Shots on Goal", "Corner Kicks", "Fouls"];
 const STAT_LABELS: Record<string, string> = { expected_goals: "Expected goals (xG)", goals_prevented: "Goals prevented" };
 
-function parseId(raw: string): number | null {
-  return /^\d{1,10}$/.test(raw) ? Number(raw) : null;
+export function generateStaticParams() {
+  const ids = allFixtures().map((f) => ({ id: String(f.fixture.id) }));
+  // A static export needs at least one page per route.
+  return ids.length ? ids : [{ id: "none" }];
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
-  const id = parseId((await params).id);
-  if (!id) return { title: "Match" };
-  try {
-    const f = await getFixture(id);
-    return { title: f ? `${f.teams.home.name} vs ${f.teams.away.name}` : "Match" };
-  } catch {
-    return { title: "Match" };
-  }
+  const f = getFixture(Number((await params).id));
+  return { title: f ? `${f.teams.home.name} vs ${f.teams.away.name}` : "Match" };
 }
 
 function statPairs(f: Fixture) {
@@ -65,20 +50,24 @@ function ratingsMap(f: Fixture) {
   return m;
 }
 
-export default async function MatchPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string }> }) {
-  const id = parseId((await params).id);
-  if (!id) notFound();
-  const sp = await searchParams;
-  const tab: TabKey = TABS.some((t) => t.key === sp.tab) ? (sp.tab as TabKey) : "facts";
-  const tz = appTimezone();
+function TeamLink({ team, className, children }: { team: TeamRef; className: string; children: React.ReactNode }) {
+  return hasTeamPage(team.id) ? (
+    <Link href={`/team/${team.id}/`} className={className}>{children}</Link>
+  ) : (
+    <div className={className}>{children}</div>
+  );
+}
 
-  let f: Fixture | null = null;
-  try {
-    f = await getFixture(id);
-  } catch (err) {
-    return <main className="page"><ErrorNotice error={err} /></main>;
-  }
-  if (!f) notFound();
+function PlayerName({ id, name }: { id: number | null; name: string | null }) {
+  if (!name) return null;
+  return hasPlayerPage(id) ? <Link href={`/player/${id}/`}>{name}</Link> : <>{name}</>;
+}
+
+export default async function MatchPage({ params }: { params: Promise<{ id: string }> }) {
+  const id = Number((await params).id);
+  const f = getFixture(id);
+  const tz = getMeta().window?.timezone ?? appTimezone();
+  if (!f) return <main className="page"><NoData what="match data" /></main>;
 
   const state = matchState(f);
   const label = statusLabel(f);
@@ -87,9 +76,10 @@ export default async function MatchPage({ params, searchParams }: { params: Prom
   const pairs = statPairs(f);
   const xg = pairs.find((p) => p.type === "expected_goals");
   const ratings = ratingsMap(f);
+  const hasDetails = Array.isArray(f.events) || Array.isArray(f.lineups);
   const events = [...(f.events ?? [])].sort((a, b) => b.time.elapsed - a.time.elapsed || (b.time.extra ?? 0) - (a.time.extra ?? 0));
   const goalsFor = (teamId: number) =>
-    (f!.events ?? [])
+    (f.events ?? [])
       .filter((e) => e.type === "Goal" && e.detail !== "Missed Penalty" && e.team.id === teamId)
       .map((e) => `${e.player.name ?? "Unknown"} ${eventMinute(e)}${e.detail === "Penalty" ? " (pen)" : e.detail === "Own Goal" ? " (og)" : ""}`);
 
@@ -99,242 +89,241 @@ export default async function MatchPage({ params, searchParams }: { params: Prom
     .filter((x): x is { p: (typeof allPlayers)[number]; r: number } => x.r != null)
     .sort((a, b) => b.r - a.r)[0];
 
-  const lineups = f.lineups ?? [];
-  const homeLineup = lineups.find((l) => l.team.id === home.id);
-  const awayLineup = lineups.find((l) => l.team.id === away.id);
+  const homeLineup = f.lineups?.find((l) => l.team.id === home.id);
+  const awayLineup = f.lineups?.find((l) => l.team.id === away.id);
 
-  let h2h: Fixture[] = [];
-  let h2hError: unknown = null;
-  if (tab === "h2h") {
-    try {
-      h2h = (await getHeadToHead(home.id, away.id)).filter((m) => m.fixture.id !== f!.fixture.id).sort((a, b) => b.fixture.timestamp - a.fixture.timestamp);
-    } catch (err) {
-      h2hError = err;
-    }
-  }
-
-  let table: Awaited<ReturnType<typeof getStandings>> = null;
-  let tableError: unknown = null;
-  if (tab === "table") {
-    try {
-      table = await getStandings(f.league.id, f.league.season);
-    } catch (err) {
-      tableError = err;
-    }
-  }
-  const tableGroup = table?.league.standings.find((g) => g.some((r) => r.team.id === home.id || r.team.id === away.id)) ?? table?.league.standings[0] ?? [];
-
+  const h2h = allFixtures()
+    .filter((m) => m.fixture.id !== f.fixture.id && [m.teams.home.id, m.teams.away.id].includes(home.id) && [m.teams.home.id, m.teams.away.id].includes(away.id))
+    .sort((a, b) => b.fixture.timestamp - a.fixture.timestamp);
   const h2hSummary = h2h.reduce(
     (acc, m) => {
       if (m.goals.home == null || m.goals.away == null || matchState(m) !== "finished") return acc;
-      const homeGoals = m.teams.home.id === home.id ? m.goals.home : m.goals.away;
-      const awayGoals = m.teams.home.id === home.id ? m.goals.away : m.goals.home;
-      if (homeGoals > awayGoals) acc.home++;
-      else if (homeGoals < awayGoals) acc.away++;
+      const hg = m.teams.home.id === home.id ? m.goals.home : m.goals.away;
+      const ag = m.teams.home.id === home.id ? m.goals.away : m.goals.home;
+      if (hg > ag) acc.home++;
+      else if (hg < ag) acc.away++;
       else acc.draw++;
       return acc;
     },
     { home: 0, draw: 0, away: 0 },
   );
 
-  return (
-    <main className="page" style={{ maxWidth: 1360 }}>
-      <AutoRefresh seconds={liveRefreshSeconds()} enabled={state === "live"} />
-      <Link href="/" className="small" style={{ fontWeight: 600, color: "var(--text-2)" }}>‹ All matches</Link>
+  const table = getStandings(f.league.id);
+  const tableGroup = table?.league.standings.find((g) => g.some((r) => r.team.id === home.id || r.team.id === away.id)) ?? table?.league.standings[0] ?? [];
 
-      <section className="card scoreboard" aria-label="Scoreboard">
-        <Link href={`/league/${f.league.id}`} className="muted small">{f.league.name}{f.league.round ? ` · ${f.league.round}` : ""}</Link>
-        <div className="sb-grid">
-          <Link href={`/team/${home.id}?league=${f.league.id}`} className="sb-team">
-            <Crest src={home.logo} alt="" size="lg" />
-            <span className="name">{home.name}</span>
-            <span className="muted small">{goalsFor(home.id).join(", ")}</span>
-          </Link>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-            <span className="sb-score">{state === "scheduled" ? "vs" : `${f.goals.home ?? 0} – ${f.goals.away ?? 0}`}</span>
-            {state === "live" && <span className="live pill">{label}</span>}
-            {state === "finished" && <span className="muted small" style={{ fontWeight: 700 }}>{f.fixture.status.long}</span>}
-            {state === "off" && <span className="muted small" style={{ fontWeight: 700 }}>{f.fixture.status.long}</span>}
-            {state === "scheduled" && <span className="muted small"><LocalTime iso={f.fixture.date} serverText={formatLongDate(f.fixture.date, tz)} mode="datetime" /></span>}
-            {xg && <span className="muted small">xG {xg.home ?? "0"} – {xg.away ?? "0"}</span>}
+  const legend = (
+    <span className="legend"><span><i style={{ background: "var(--accent)" }} />{home.name}</span><span><i style={{ background: "var(--away)" }} />{away.name}</span></span>
+  );
+
+  const facts = (
+    <div className="row">
+      <div className="col-main">
+        {pairs.length > 0 && (
+          <section className="card pad stack" aria-labelledby="ts-h">
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <h2 id="ts-h">Top stats</h2>
+              {legend}
+            </div>
+            {TOP_STATS.map((type) => pairs.find((p) => p.type === type)).filter(Boolean).map((p) => (
+              <StatBar key={p!.type} label={p!.label} home={p!.home} away={p!.away} />
+            ))}
+          </section>
+        )}
+        <section className="card" aria-labelledby="ev-h">
+          <div className="card-head"><h2 id="ev-h">Events</h2></div>
+          {events.length === 0 ? (
+            <p className="empty">
+              {state === "scheduled" ? "The match hasn't started yet." : hasDetails ? "No events reported." : "Match details are only kept for recent matches."}
+            </p>
+          ) : (
+            <ol className="events">
+              {events.map((e, i) => {
+                const t = eventTag(e);
+                const teamName = e.team.id === home.id ? home.name : away.name;
+                return (
+                  <li key={i}>
+                    <span className="muted" style={{ fontWeight: 700, fontSize: 13 }}>{eventMinute(e)}</span>
+                    <span className={`etag ${t.tone}`}>{t.tag}</span>
+                    <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <span style={{ fontWeight: 600 }}>{e.detail}, {teamName}</span>
+                      <span className="muted small">
+                        {e.type === "subst" ? (
+                          <><PlayerName id={e.assist.id} name={e.assist.name} /> on for <PlayerName id={e.player.id} name={e.player.name} /></>
+                        ) : (
+                          <>
+                            <PlayerName id={e.player.id} name={e.player.name} />
+                            {e.type === "Goal" && e.assist.name && <>, assist by <PlayerName id={e.assist.id} name={e.assist.name} /></>}
+                          </>
+                        )}
+                        {e.comments ? ` · ${e.comments}` : ""}
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </section>
+      </div>
+      <div className="col-side">
+        {topRated && (
+          <div className="card pad" style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={topRated.p.player.photo} alt="" width={56} height={56} className="avatar" loading="lazy" referrerPolicy="no-referrer" />
+            <span className="grow" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span className="label">{state === "finished" ? "Player of the match" : "Top rated so far"}</span>
+              <span style={{ fontWeight: 700, fontSize: 16 }}><PlayerName id={topRated.p.player.id} name={topRated.p.player.name} /></span>
+              <span className="muted small">{topRated.p.team.name}</span>
+            </span>
+            <Rating value={topRated.r} />
           </div>
-          <Link href={`/team/${away.id}?league=${f.league.id}`} className="sb-team">
-            <Crest src={away.logo} alt="" size="lg" />
-            <span className="name">{away.name}</span>
-            <span className="muted small">{goalsFor(away.id).join(", ")}</span>
-          </Link>
-        </div>
-      </section>
+        )}
+        <section className="card pad" aria-labelledby="mi-h">
+          <h2 id="mi-h" style={{ fontSize: 16, marginBottom: 8 }}>Match info</h2>
+          <div className="kv"><span className="muted">Kick-off</span><span><LocalTime iso={f.fixture.date} serverText={formatLongDate(f.fixture.date, tz)} mode="datetime" /></span></div>
+          {f.fixture.venue.name && <div className="kv"><span className="muted">Venue</span><span>{f.fixture.venue.name}{f.fixture.venue.city ? `, ${f.fixture.venue.city}` : ""}</span></div>}
+          {f.fixture.referee && <div className="kv"><span className="muted">Referee</span><span>{f.fixture.referee}</span></div>}
+          {f.score.halftime.home != null && <div className="kv"><span className="muted">Half-time</span><span>{f.score.halftime.home} – {f.score.halftime.away}</span></div>}
+          {f.score.penalty.home != null && <div className="kv"><span className="muted">Penalties</span><span>{f.score.penalty.home} – {f.score.penalty.away}</span></div>}
+        </section>
+      </div>
+    </div>
+  );
 
-      <TabLinks label="Match sections" active={tab} tabs={TABS.map((t) => ({ key: t.key, label: t.label, href: t.key === "facts" ? `/match/${id}` : `/match/${id}?tab=${t.key}` }))} />
-
-      {tab === "facts" && (
-        <div className="row">
-          <div className="col-main">
-            {pairs.length > 0 && (
-              <section className="card pad stack" aria-labelledby="ts-h">
-                <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                  <h2 id="ts-h">Top stats</h2>
-                  <span className="legend"><span><i style={{ background: "var(--accent)" }} />{home.name}</span><span><i style={{ background: "var(--away)" }} />{away.name}</span></span>
-                </div>
-                {TOP_STATS.map((type) => pairs.find((p) => p.type === type)).filter(Boolean).map((p) => (
-                  <StatBar key={p!.type} label={p!.label} home={p!.home} away={p!.away} />
-                ))}
-              </section>
-            )}
-            <section className="card" aria-labelledby="ev-h">
-              <div className="card-head"><h2 id="ev-h">Events</h2></div>
-              {events.length === 0 ? (
-                <p className="empty">{state === "scheduled" ? "The match hasn't started yet." : "No events reported yet."}</p>
-              ) : (
-                <ol className="events">
-                  {events.map((e, i) => {
-                    const t = eventTag(e);
-                    const teamName = e.team.id === home.id ? home.name : away.name;
-                    const detail =
-                      e.type === "subst"
-                        ? `${e.assist.name ?? ""} on for ${e.player.name ?? ""}`
-                        : e.type === "Goal" && e.assist.name
-                          ? `${e.player.name}, assist by ${e.assist.name}`
-                          : e.player.name ?? "";
-                    return (
-                      <li key={i}>
-                        <span className="muted" style={{ fontWeight: 700, fontSize: 13 }}>{eventMinute(e)}</span>
-                        <span className={`etag ${t.tone}`}>{t.tag}</span>
-                        <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                          <span style={{ fontWeight: 600 }}>{e.detail}, {teamName}</span>
-                          <span className="muted small">{detail}{e.comments ? ` · ${e.comments}` : ""}</span>
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ol>
-              )}
-            </section>
+  const lineup = (
+    <section className="card pad stack" aria-label="Lineups">
+      {homeLineup && awayLineup ? (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontWeight: 700, flexWrap: "wrap" }}>
+            <span>{home.name}{homeLineup.formation ? ` · ${homeLineup.formation}` : ""}</span>
+            <span>{awayLineup.formation ? `${awayLineup.formation} · ` : ""}{away.name}</span>
           </div>
-          <div className="col-side">
-            {topRated && (
-              <Link href={`/player/${topRated.p.player.id}`} className="card pad" style={{ display: "flex", alignItems: "center", gap: 14, color: "var(--text)" }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={topRated.p.player.photo} alt="" width={56} height={56} className="avatar" loading="lazy" referrerPolicy="no-referrer" />
-                <span className="grow" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span className="label">{state === "finished" ? "Player of the match" : "Top rated so far"}</span>
-                  <span style={{ fontWeight: 700, fontSize: 16 }}>{topRated.p.player.name}</span>
-                  <span className="muted small">{topRated.p.team.name}</span>
-                </span>
-                <Rating value={topRated.r} />
-              </Link>
-            )}
-            <section className="card pad" aria-labelledby="mi-h">
-              <h2 id="mi-h" style={{ fontSize: 16, marginBottom: 8 }}>Match info</h2>
-              <div className="kv"><span className="muted">Kick-off</span><span><LocalTime iso={f.fixture.date} serverText={formatLongDate(f.fixture.date, tz)} mode="datetime" /></span></div>
-              {f.fixture.venue.name && <div className="kv"><span className="muted">Venue</span><span>{f.fixture.venue.name}{f.fixture.venue.city ? `, ${f.fixture.venue.city}` : ""}</span></div>}
-              {f.fixture.referee && <div className="kv"><span className="muted">Referee</span><span>{f.fixture.referee}</span></div>}
-              {f.score.halftime.home != null && <div className="kv"><span className="muted">Half-time</span><span>{f.score.halftime.home} – {f.score.halftime.away}</span></div>}
-              {f.score.penalty.home != null && <div className="kv"><span className="muted">Penalties</span><span>{f.score.penalty.home} – {f.score.penalty.away}</span></div>}
-            </section>
-          </div>
-        </div>
-      )}
-
-      {tab === "lineup" && (
-        <section className="card pad stack" aria-label="Lineups">
-          {homeLineup && awayLineup ? (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontWeight: 700, flexWrap: "wrap" }}>
-                <span>{home.name}{homeLineup.formation ? ` · ${homeLineup.formation}` : ""}</span>
-                <span>{awayLineup.formation ? `${awayLineup.formation} · ` : ""}{away.name}</span>
-              </div>
-              <Pitch home={homeLineup} away={awayLineup} ratings={ratings} />
-              <div className="row">
-                {[homeLineup, awayLineup].map((l) => (
-                  <div key={l.team.id} style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span className="label">{l.team.name}{l.coach.name ? ` · Coach ${l.coach.name}` : ""}</span>
-                    {[...l.startXI.map((p) => ({ ...p, starter: true })), ...l.substitutes.map((p) => ({ ...p, starter: false }))].map((p) => (
-                      <Link key={p.player.id} href={`/player/${p.player.id}`} className="kv" style={{ color: "var(--text)" }}>
-                        <span style={{ display: "flex", gap: 10 }}>
-                          <span className="muted" style={{ width: 24, fontWeight: 700 }}>{p.player.number ?? ""}</span>
-                          <span>{p.player.name}</span>
-                          {!p.starter && <span className="muted small">Bench</span>}
-                        </span>
-                        <span><Rating value={ratings.get(p.player.id) ?? null} /></span>
-                      </Link>
-                    ))}
+          <Pitch home={homeLineup} away={awayLineup} ratings={ratings} />
+          <div className="row">
+            {[homeLineup, awayLineup].map((l) => (
+              <div key={l.team.id} style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 4 }}>
+                <span className="label">{l.team.name}{l.coach.name ? ` · Coach ${l.coach.name}` : ""}</span>
+                {[...l.startXI.map((p) => ({ ...p, starter: true })), ...l.substitutes.map((p) => ({ ...p, starter: false }))].map((p) => (
+                  <div key={p.player.id} className="kv">
+                    <span style={{ display: "flex", gap: 10 }}>
+                      <span className="muted" style={{ width: 24, fontWeight: 700 }}>{p.player.number ?? ""}</span>
+                      <span><PlayerName id={p.player.id} name={p.player.name} /></span>
+                      {!p.starter && <span className="muted small">Bench</span>}
+                    </span>
+                    <span><Rating value={ratings.get(p.player.id) ?? null} /></span>
                   </div>
                 ))}
               </div>
-            </>
-          ) : (
-            <p className="empty">Lineups are usually published about an hour before kick-off.</p>
-          )}
-        </section>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="empty">{state === "scheduled" ? "Lineups are usually published about an hour before kick-off." : "No lineups available for this match."}</p>
       )}
+    </section>
+  );
 
-      {tab === "stats" && (
-        <section className="card pad stack" aria-label="Match stats">
-          {pairs.length ? (
-            <>
-              <span className="legend"><span><i style={{ background: "var(--accent)" }} />{home.name}</span><span><i style={{ background: "var(--away)" }} />{away.name}</span></span>
-              {pairs.map((p) => <StatBar key={p.type} label={p.label} home={p.home} away={p.away} />)}
-            </>
-          ) : (
-            <p className="empty">Stats appear once the match is under way.</p>
-          )}
-        </section>
+  const stats = (
+    <section className="card pad stack" aria-label="Match stats">
+      {pairs.length ? (
+        <>
+          {legend}
+          {pairs.map((p) => <StatBar key={p.type} label={p.label} home={p.home} away={p.away} />)}
+        </>
+      ) : (
+        <p className="empty">{state === "scheduled" ? "Stats appear once the match is under way." : "No stats available for this match."}</p>
       )}
+    </section>
+  );
 
-      {tab === "h2h" && (
-        <section className="card pad stack" aria-label="Head-to-head">
-          {h2hError ? (
-            <ErrorNotice error={h2hError} />
-          ) : h2h.length === 0 ? (
-            <p className="empty">No previous meetings found.</p>
-          ) : (
-            <>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, textAlign: "center" }}>
-                <div className="tile" style={{ background: "var(--bg-2)" }}><span className="v" style={{ color: "var(--accent)" }}>{h2hSummary.home}</span><span className="muted small">{home.name} wins</span></div>
-                <div className="tile" style={{ background: "var(--bg-2)" }}><span className="v">{h2hSummary.draw}</span><span className="muted small">Draws</span></div>
-                <div className="tile" style={{ background: "var(--bg-2)" }}><span className="v" style={{ color: "var(--away)" }}>{h2hSummary.away}</span><span className="muted small">{away.name} wins</span></div>
-              </div>
-              {h2h.map((m) => (
-                <Link key={m.fixture.id} href={`/match/${m.fixture.id}`} className="kv" style={{ color: "var(--text)", alignItems: "center" }}>
-                  <span className="muted small" style={{ width: 120, flexShrink: 0 }}>{formatShortDate(m.fixture.date, tz)}<br />{m.league.name}</span>
-                  <span style={{ flex: 1, textAlign: "right" }}>{m.teams.home.name}</span>
-                  <span style={{ width: 70, textAlign: "center", fontFamily: "var(--font-head)", fontWeight: 700 }}>{m.goals.home ?? "–"} – {m.goals.away ?? "–"}</span>
-                  <span style={{ flex: 1, textAlign: "left", fontWeight: 600 }}>{m.teams.away.name}</span>
-                </Link>
+  const headToHead = (
+    <section className="card pad stack" aria-label="Head-to-head">
+      <p className="muted small" style={{ margin: 0 }}>Meetings this season in the Premier League, La Liga and Champions League.</p>
+      {h2h.length === 0 ? (
+        <p className="empty">No other meetings this season.</p>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, textAlign: "center" }}>
+            <div className="tile" style={{ background: "var(--bg-2)" }}><span className="v" style={{ color: "var(--accent)" }}>{h2hSummary.home}</span><span className="muted small">{home.name} wins</span></div>
+            <div className="tile" style={{ background: "var(--bg-2)" }}><span className="v">{h2hSummary.draw}</span><span className="muted small">Draws</span></div>
+            <div className="tile" style={{ background: "var(--bg-2)" }}><span className="v" style={{ color: "var(--away)" }}>{h2hSummary.away}</span><span className="muted small">{away.name} wins</span></div>
+          </div>
+          {h2h.map((m) => (
+            <Link key={m.fixture.id} href={`/match/${m.fixture.id}/`} className="kv" style={{ color: "var(--text)", alignItems: "center" }}>
+              <span className="muted small" style={{ width: 120, flexShrink: 0 }}>{formatShortDate(m.fixture.date, tz)}<br />{m.league.name}</span>
+              <span style={{ flex: 1, textAlign: "right" }}>{m.teams.home.name}</span>
+              <span style={{ width: 70, textAlign: "center", fontFamily: "var(--font-head)", fontWeight: 700 }}>{matchState(m) === "scheduled" ? "vs" : `${m.goals.home ?? "–"} – ${m.goals.away ?? "–"}`}</span>
+              <span style={{ flex: 1, textAlign: "left", fontWeight: 600 }}>{m.teams.away.name}</span>
+            </Link>
+          ))}
+        </>
+      )}
+    </section>
+  );
+
+  const tablePanel = (
+    <section className="card" aria-label="Table">
+      {tableGroup.length === 0 ? (
+        <p className="empty">No table for this competition yet.</p>
+      ) : (
+        <div className="table-wrap">
+          <table className="data">
+            <thead><tr><th scope="col">#</th><th scope="col" className="left">Team</th><th scope="col">P</th><th scope="col">GD</th><th scope="col">Pts</th></tr></thead>
+            <tbody>
+              {tableGroup.map((r) => (
+                <tr key={r.team.id} className={r.team.id === home.id || r.team.id === away.id ? "hl" : undefined}>
+                  <td>{r.rank}</td>
+                  <td className="left"><Link href={`/team/${r.team.id}/`} className="team-cell"><Crest src={r.team.logo} alt="" size="sm" />{r.team.name}</Link></td>
+                  <td>{r.all.played}</td>
+                  <td>{signed(r.goalsDiff)}</td>
+                  <td className="strong">{r.points}</td>
+                </tr>
               ))}
-            </>
-          )}
-        </section>
+            </tbody>
+          </table>
+        </div>
       )}
+    </section>
+  );
 
-      {tab === "table" && (
-        <section className="card" aria-label="Table">
-          {tableError ? (
-            <div style={{ padding: 16 }}><ErrorNotice error={tableError} /></div>
-          ) : tableGroup.length === 0 ? (
-            <p className="empty">No table for this competition.</p>
-          ) : (
-            <div className="table-wrap">
-              <table className="data">
-                <thead><tr><th scope="col">#</th><th scope="col" className="left">Team</th><th scope="col">P</th><th scope="col">GD</th><th scope="col">Pts</th></tr></thead>
-                <tbody>
-                  {tableGroup.map((r) => (
-                    <tr key={r.team.id} className={r.team.id === home.id || r.team.id === away.id ? "hl" : undefined}>
-                      <td>{r.rank}</td>
-                      <td className="left"><Link href={`/team/${r.team.id}?league=${f!.league.id}`} className="team-cell"><Crest src={r.team.logo} alt="" size="sm" />{r.team.name}</Link></td>
-                      <td>{r.all.played}</td>
-                      <td>{signed(r.goalsDiff)}</td>
-                      <td className="strong">{r.points}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      )}
+  return (
+    <main className="page" style={{ maxWidth: 1360 }}>
+      <Link href="/" className="small" style={{ fontWeight: 600, color: "var(--text-2)" }}>‹ All matches</Link>
+
+      <section className="card scoreboard" aria-label="Scoreboard">
+        <Link href={`/league/${f.league.id}/`} className="muted small">{f.league.name}{f.league.round ? ` · ${f.league.round}` : ""}</Link>
+        <div className="sb-grid">
+          <TeamLink team={home} className="sb-team">
+            <Crest src={home.logo} alt="" size="lg" />
+            <span className="name">{home.name}</span>
+            <span className="muted small">{goalsFor(home.id).join(", ")}</span>
+          </TeamLink>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+            <span className="sb-score">{state === "scheduled" ? "vs" : `${f.goals.home ?? 0} – ${f.goals.away ?? 0}`}</span>
+            {state === "live" && <span className="live pill">{label} at last update</span>}
+            {(state === "finished" || state === "off") && <span className="muted small" style={{ fontWeight: 700 }}>{f.fixture.status.long}</span>}
+            {state === "scheduled" && <span className="muted small"><LocalTime iso={f.fixture.date} serverText={formatLongDate(f.fixture.date, tz)} mode="datetime" /></span>}
+            {xg && <span className="muted small">xG {xg.home ?? "0"} – {xg.away ?? "0"}</span>}
+          </div>
+          <TeamLink team={away} className="sb-team">
+            <Crest src={away.logo} alt="" size="lg" />
+            <span className="name">{away.name}</span>
+            <span className="muted small">{goalsFor(away.id).join(", ")}</span>
+          </TeamLink>
+        </div>
+      </section>
+
+      <ClientTabs
+        label="Match sections"
+        tabs={[
+          { key: "facts", label: "Facts" },
+          { key: "lineup", label: "Lineup" },
+          { key: "stats", label: "Stats" },
+          { key: "h2h", label: "Head-to-head" },
+          { key: "table", label: "Table" },
+        ]}
+        panels={{ facts, lineup, stats, h2h: headToHead, table: tablePanel }}
+      />
     </main>
   );
 }

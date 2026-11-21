@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Rating from "./Rating";
+import { hasPlayerPage } from "@/lib/data";
 import type { Lineup, LineupPlayer } from "@/lib/types";
 
 function columns(players: LineupPlayer[]): LineupPlayer[][] {
@@ -30,15 +31,22 @@ function Half({ lineup, side, ratings }: { lineup: Lineup; side: "home" | "away"
     <div className={`half ${side}`}>
       {cols.map((col, i) => (
         <div key={i} className="line" style={{ flexDirection: side === "away" ? "column-reverse" : "column" }}>
-          {col.map((p) => (
-            <Link key={p.player.id} href={`/player/${p.player.id}`} className="pp">
-              <span className="shirt" style={{ background: colors.bg, color: colors.fg }}>
-                {p.player.number ?? ""}
-                <Rating value={ratings.get(p.player.id) ?? null} />
-              </span>
-              <span className="nm">{p.player.name}</span>
-            </Link>
-          ))}
+          {col.map((p) => {
+            const inner = (
+              <>
+                <span className="shirt" style={{ background: colors.bg, color: colors.fg }}>
+                  {p.player.number ?? ""}
+                  <Rating value={ratings.get(p.player.id) ?? null} />
+                </span>
+                <span className="nm">{p.player.name}</span>
+              </>
+            );
+            return hasPlayerPage(p.player.id) ? (
+              <Link key={p.player.id} href={`/player/${p.player.id}/`} className="pp">{inner}</Link>
+            ) : (
+              <span key={p.player.id} className="pp">{inner}</span>
+            );
+          })}
         </div>
       ))}
     </div>

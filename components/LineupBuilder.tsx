@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BASE_PATH } from "@/lib/config";
 
 interface Team { id: number; name: string; logo: string; league: string }
 interface SquadPlayer { id: number; name: string; number: number | null; position: string }
@@ -47,24 +48,30 @@ export default function LineupBuilder({ teams }: { teams: Team[] }) {
     }
   }, [state]);
 
+  const [allSquads, setAllSquads] = useState<Record<string, SquadPlayer[]> | null>(null);
+
   useEffect(() => {
-    if (!state.teamId) return;
+    if (!state.teamId || allSquads) return;
     const ctrl = new AbortController();
     setStatus("loading");
-    fetch(`/api/squad/${state.teamId}`, { signal: ctrl.signal })
+    fetch(`${BASE_PATH}/data/squads.json`, { signal: ctrl.signal })
       .then(async (r) => {
-        const body = (await r.json()) as { players?: SquadPlayer[]; error?: string };
-        if (!r.ok) throw new Error(body.error ?? "Could not load the squad.");
-        setSquad(body.players ?? []);
+        if (!r.ok) throw new Error("Could not load squads.");
+        setAllSquads((await r.json()) as Record<string, SquadPlayer[]>);
         setStatus("idle");
       })
       .catch((e: unknown) => {
         if (ctrl.signal.aborted) return;
         setStatus("error");
-        setMessage(e instanceof Error ? e.message : "Could not load the squad.");
+        setMessage(e instanceof Error ? e.message : "Could not load squads.");
       });
     return () => ctrl.abort();
-  }, [state.teamId]);
+  }, [state.teamId, allSquads]);
+
+  useEffect(() => {
+    if (!allSquads || !state.teamId) return;
+    setSquad(allSquads[String(state.teamId)] ?? []);
+  }, [allSquads, state.teamId]);
 
   const rows = FORMATIONS[state.formation];
   const slots = useMemo(() => rows.flatMap((row, r) => row.map((pos, c) => ({ key: `${r}-${c}`, pos }))), [rows]);
@@ -109,6 +116,9 @@ export default function LineupBuilder({ teams }: { teams: Team[] }) {
 
       {status === "error" && <div className="alert" role="alert">{message}</div>}
       {status === "loading" && <p className="muted" role="status">Loading squad…</p>}
+      {status === "idle" && allSquads && state.teamId && squad.length === 0 && (
+        <p className="muted" role="status">This team&apos;s squad hasn&apos;t been downloaded yet. Squads are added a few teams at a time, so check back after the next updates.</p>
+      )}
 
       <div style={{ borderRadius: 12, background: "var(--pitch)", border: "2px solid var(--pitch-line)", padding: "20px 8px", display: "flex", flexDirection: "column", gap: 18 }}>
         {rows.map((row, r) => (

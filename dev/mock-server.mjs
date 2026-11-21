@@ -101,6 +101,26 @@ function detailed(f) {
   };
 }
 
+function seasonFixtures(leagueId) {
+  const ids = leagueId === 140 ? [201, 202, 105, 106] : leagueId === 2 ? [101, 202, 103, 201] : [101, 103, 105, 102, 106, 104];
+  const out = [];
+  let n = 0;
+  for (let w = -6; w <= 6; w++) {
+    if (w === 0) continue;
+    const h = ids[(n * 2) % ids.length], a = ids[(n * 2 + 1 + Math.abs(w)) % ids.length];
+    if (h !== a) {
+      out.push(fixture(leagueId * 1000 + 50 + n, leagueId, h, a, {
+        date: today(w * 7, 15),
+        status: w < 0 ? FT : NS,
+        goals: w < 0 ? { home: (n + 1) % 3, away: n % 2 } : { home: null, away: null },
+        round: `Regular Season - ${14 + w}`,
+      }));
+    }
+    n++;
+  }
+  return out;
+}
+
 function standingsFor(leagueId) {
   const ids = leagueId === 140 ? [201, 202, 105, 106] : [101, 103, 105, 102, 106, 104];
   const rows = ids.map((id, i) => {
@@ -132,11 +152,15 @@ function profile(id) {
 
 function route(path, q) {
   if (path === "/fixtures") {
-    if (q.id) {
-      const f = dayFixtures().find((x) => String(x.fixture.id) === q.id);
-      return f ? [detailed(f)] : [];
+    if (q.id || q.ids) {
+      const wanted = (q.ids || q.id).split("-");
+      return [...dayFixtures(), ...seasonFixtures(39), ...seasonFixtures(140), ...seasonFixtures(2)]
+        .filter((x) => wanted.includes(String(x.fixture.id)))
+        .map(detailed);
     }
     if (q.date) return dayFixtures();
+    if (q.league && q.from && q.to) return dayFixtures().filter((f) => String(f.league.id) === q.league);
+    if (q.league && q.season && !q.next && !q.last) return seasonFixtures(Number(q.league));
     if (q.team || q.league) {
       const n = Number(q.next || q.last || 5);
       return Array.from({ length: n }, (_, i) => {
@@ -157,6 +181,10 @@ function route(path, q) {
     return [pid(101, 9), pid(103, 9), pid(105, 9), pid(102, 10), pid(106, 9)].map(profile);
   }
   if (path === "/players") return [profile(Number(q.id))];
+  if (path === "/teams" && q.league) {
+    const ids = q.league === "140" ? [201, 202, 105, 106] : [101, 103, 105, 102, 106, 104];
+    return ids.map((id) => ({ team: { ...TEAMS[id], code: null, country: "Fictionland", founded: 1890 + id % 50, national: false }, venue: { id, name: `${TEAMS[id].name} Ground`, city: "Somewhere", capacity: 30000 + id * 10, surface: "grass" } }));
+  }
   if (path === "/teams") {
     const t = TEAMS[Number(q.id)];
     return t ? [{ team: { ...t, code: "KGC", country: "England", founded: 1892, national: false }, venue: { id: 1, name: "Kingsport Park", city: "Kingsport", capacity: 38500, surface: "grass" } }] : [];
@@ -182,7 +210,7 @@ createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
   const q = Object.fromEntries(url.searchParams);
   const send = (body) => {
-    res.writeHead(200, { "content-type": "application/json" });
+    res.writeHead(200, { "content-type": "application/json", "x-ratelimit-requests-remaining": "90" });
     res.end(JSON.stringify(body));
   };
   if (!req.headers["x-apisports-key"]) return send({ get: url.pathname, parameters: q, errors: { token: "Missing application key." }, results: 0, response: [] });

@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk } from "next/font/google";
 import Nav from "@/components/Nav";
+import UpdatedStamp from "@/components/UpdatedStamp";
+import { getMeta } from "@/lib/data";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
@@ -18,10 +20,20 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const meta = getMeta();
   return (
     <html lang="en" className={`${inter.variable} ${grotesk.variable}`}>
       <body>
         <Nav />
+        {meta.demo && (
+          <div className="demo-banner" role="note">
+            Demo mode: all teams, players and results on this site are fictional test data.
+          </div>
+        )}
+        <div className="status-bar">
+          <UpdatedStamp iso={meta.lastRun} />
+          <span className="muted small">Scores refresh on a schedule, not in real time.</span>
+        </div>
         {children}
         <footer className="site">Data from API-Football. Times are shown in your local time zone.</footer>
       </body>

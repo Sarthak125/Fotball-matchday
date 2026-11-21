@@ -1,0 +1,90 @@
+name: Update data and deploy
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Every 3 hours (at minute 17 to avoid the busy top of the hour).
+    # This fits API-Football's free plan of 100 calls a day with MAX_CALLS_PER_RUN=12.
+    # On a paid plan you can run more often, for example "*/15 * * * *".
+    # GitHub may start scheduled runs late, especially at busy times.
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATA_MODE: ${{ vars.USE_DEMO_DATA == 'true' && 'demo' || 'live' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Restore data saved by earlier runs
+        uses: actions/cache/restore@v5
+        with:
+          path: data
+          key: football-data-${{ env.DATA_MODE }}-${{ github.run_id }}
+          restore-keys: football-data-${{ env.DATA_MODE }}-
+
+      - name: Fetch football data
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          APP_TIMEZONE: ${{ vars.APP_TIMEZONE }}
+          MAX_CALLS_PER_RUN: ${{ vars.MAX_CALLS_PER_RUN }}
+        run: |
+          if [ "$DATA_MODE" = "demo" ]; then
+            echo "Demo mode: using the built-in mock API with fictional data."
+            node dev/mock-server.mjs &
+            sleep 1
+            API_FOOTBALL_KEY=demo API_FOOTBALL_BASE_URL=http://127.0.0.1:4010 MIN_INTERVAL_MS=0 MAX_CALLS_PER_RUN=100 DEMO_DATA=true \
+              node scripts/fetch-data.mjs
+          else
+            node scripts/fetch-data.mjs
+          fi
+
+      - name: Save data for the next run
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: data
+          key: football-data-${{ env.DATA_MODE }}-${{ github.run_id }}
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build static site
+        env:
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

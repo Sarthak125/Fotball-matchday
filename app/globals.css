@@ -96,7 +96,7 @@ img { display: block; }
 .icon-btn { width: 44px; height: 44px; padding: 0; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--card); color: var(--text-2); font-weight: 600; cursor: pointer; }
-.chip[aria-pressed="true"], .chip[aria-current="true"] { background: var(--accent); border-color: var(--accent); color: #0b0f14; }
+.chip[aria-pressed="true"], .chip[aria-current="true"], .chip[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #0b0f14; }
 .chip:hover { color: var(--text); }
 .chip[aria-pressed="true"]:hover, .chip[aria-current="true"]:hover { color: #0b0f14; }
 .tabs { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); overflow-x: auto; }
@@ -232,3 +232,8 @@ footer.site { padding: 24px 32px 40px; color: var(--faint); font-size: 12px; max
   .col-main { order: 1; }
   .col-side { order: 3; }
 }
+
+.status-bar { max-width: 1440px; margin: 0 auto; padding: 10px 32px 0; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; }
+.demo-banner { background: #3b2f0b; color: #fde68a; text-align: center; padding: 8px 16px; font-size: 13px; font-weight: 600; }
+button.day { cursor: pointer; font: inherit; }
+@media (max-width: 640px) { .status-bar { padding: 10px 16px 0; } }

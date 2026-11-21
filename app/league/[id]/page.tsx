@@ -1,20 +1,22 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import ClientTabs from "@/components/ClientTabs";
 import Crest from "@/components/Crest";
-import ErrorNotice from "@/components/ErrorNotice";
 import Form from "@/components/Form";
 import LocalTime from "@/components/LocalTime";
-import TabLinks from "@/components/TabLinks";
-import { getLeagueFixtures, getStandings, getTopAssists, getTopScorers } from "@/lib/api";
-import { appTimezone, currentSeason, leagueById, seasonLabel } from "@/lib/config";
+import { appTimezone, currentSeason, LEAGUES, leagueById, seasonLabel } from "@/lib/config";
+import { getMeta, getSeasonFixtures, getStandings, getTopAssists, getTopScorers } from "@/lib/data";
 import { formatLongDate, matchState, signed, statusLabel } from "@/lib/format";
 import type { Fixture, PlayerProfile, StandingRow } from "@/lib/types";
 
-export const dynamic = "force-dynamic";
+export const dynamicParams = false;
 
-type Tab = "table" | "fixtures" | "players";
 type View = "all" | "home" | "away";
+
+export function generateStaticParams() {
+  return LEAGUES.map((l) => ({ id: String(l.id) }));
+}
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const league = leagueById(Number((await params).id));
@@ -29,7 +31,7 @@ function zoneColor(description: string | null): string {
   return "transparent";
 }
 
-function TableBlock({ rows, view, leagueId, title }: { rows: StandingRow[]; view: View; leagueId: number; title?: string }) {
+function TableBlock({ rows, view, title }: { rows: StandingRow[]; view: View; title?: string }) {
   const zones = [...new Set(rows.map((r) => r.description).filter((d): d is string => !!d))];
   const split = (r: StandingRow) => (view === "home" ? r.home : r.away);
   const ordered =
@@ -61,7 +63,7 @@ function TableBlock({ rows, view, leagueId, title }: { rows: StandingRow[]; view
               return (
                 <tr key={r.team.id}>
                   <td style={{ boxShadow: `inset 3px 0 0 ${view === "all" ? zoneColor(r.description) : "transparent"}`, fontWeight: 600 }}>{view === "all" ? r.rank : idx + 1}</td>
-                  <td className="left"><Link href={`/team/${r.team.id}?league=${leagueId}`} className="team-cell"><Crest src={r.team.logo} alt="" size="sm" />{r.team.name}</Link></td>
+                  <td className="left"><Link href={`/team/${r.team.id}/`} className="team-cell"><Crest src={r.team.logo} alt="" size="sm" />{r.team.name}</Link></td>
                   <td>{s.played}</td><td>{s.win}</td><td>{s.draw}</td><td>{s.lose}</td>
                   <td>{s.goals.for}:{s.goals.against}</td><td>{signed(gd)}</td>
                   <td className="strong">{pts}</td>
@@ -89,7 +91,7 @@ function Leaders({ title, list, stat }: { title: string; list: PlayerProfile[]; 
       {list.map((p, i) => {
         const s = p.statistics[0];
         return (
-          <Link key={p.player.id} href={`/player/${p.player.id}`} className="list-row">
+          <Link key={p.player.id} href={`/player/${p.player.id}/`} className="list-row">
             <span className="muted" style={{ width: 18, fontWeight: 600 }}>{i + 1}</span>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={p.player.photo} alt="" width={36} height={36} className="avatar" loading="lazy" referrerPolicy="no-referrer" />
@@ -114,7 +116,7 @@ function FixtureList({ title, list, tz }: { title: string; list: Fixture[]; tz: 
         const st = matchState(m);
         return (
           <div key={m.fixture.id} className="match-row">
-            <Link href={`/match/${m.fixture.id}`} className="match-link">
+            <Link href={`/match/${m.fixture.id}/`} className="match-link">
               <span className="small" style={{ fontWeight: 600, color: st === "live" ? "var(--accent)" : "var(--muted)" }}>
                 {st === "scheduled" ? <LocalTime iso={m.fixture.date} serverText={formatLongDate(m.fixture.date, tz)} mode="datetime" /> : statusLabel(m)}
               </span>
@@ -129,63 +131,57 @@ function FixtureList({ title, list, tz }: { title: string; list: Fixture[]; tz: 
   );
 }
 
-export default async function LeaguePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string; view?: string }> }) {
+export default async function LeaguePage({ params }: { params: Promise<{ id: string }> }) {
   const league = leagueById(Number((await params).id));
   if (!league) notFound();
-  const sp = await searchParams;
-  const tab: Tab = sp.tab === "fixtures" || sp.tab === "players" ? sp.tab : "table";
-  const view: View = sp.view === "home" || sp.view === "away" ? sp.view : "all";
-  const season = currentSeason();
-  const tz = appTimezone();
-  const base = `/league/${league.id}`;
+  const meta = getMeta();
+  const season = meta.window?.season ?? currentSeason();
+  const tz = meta.window?.timezone ?? appTimezone();
+  const groups = getStandings(league.id)?.league.standings ?? [];
+  const scorers = getTopScorers(league.id);
+  const assists = getTopAssists(league.id);
+  const builtAt = meta.lastRun ? Date.parse(meta.lastRun) / 1000 : 0;
+  const fixtures = getSeasonFixtures(league.id);
+  const upcoming = fixtures.filter((m) => m.fixture.timestamp >= builtAt && matchState(m) !== "finished").sort((a, b) => a.fixture.timestamp - b.fixture.timestamp).slice(0, 10);
+  const recent = fixtures.filter((m) => matchState(m) === "finished").sort((a, b) => b.fixture.timestamp - a.fixture.timestamp).slice(0, 10);
 
-  let body: React.ReactNode;
-  try {
-    if (tab === "table") {
-      const [standings, scorers] = await Promise.all([getStandings(league.id, season), getTopScorers(league.id, season)]);
-      const groups = standings?.league.standings ?? [];
-      body = (
-        <div className="row">
-          <div className="col-main">
-            <div role="group" aria-label="Table view" className="chips">
-              {(["all", "home", "away"] as const).map((v) => (
-                <Link key={v} href={v === "all" ? base : `${base}?view=${v}`} className="chip" aria-current={view === v ? "true" : undefined}>
-                  {v === "all" ? "All" : v === "home" ? "Home" : "Away"}
-                </Link>
-              ))}
-            </div>
-            {groups.length === 0 ? (
-              <div className="card empty">The table for {seasonLabel(season)} is not available yet.</div>
-            ) : (
-              groups.map((g, i) => <TableBlock key={i} rows={g} view={view} leagueId={league.id} title={groups.length > 1 ? g[0]?.group : undefined} />)
-            )}
-          </div>
-          <div className="col-side">
-            <Leaders title="Top scorers" list={scorers.slice(0, 5)} stat={(p) => p.statistics[0]?.goals.total ?? null} />
-            <Link href={`${base}?tab=players`} className="btn">All player stats</Link>
-          </div>
-        </div>
-      );
-    } else if (tab === "fixtures") {
-      const [next, last] = await Promise.all([getLeagueFixtures(league.id, { next: 10 }, season), getLeagueFixtures(league.id, { last: 10 }, season)]);
-      body = (
-        <div className="row">
-          <div className="col-main"><FixtureList title="Upcoming" list={next} tz={tz} /></div>
-          <div className="col-main"><FixtureList title="Recent results" list={[...last].sort((a, b) => b.fixture.timestamp - a.fixture.timestamp)} tz={tz} /></div>
-        </div>
-      );
-    } else {
-      const [scorers, assists] = await Promise.all([getTopScorers(league.id, season), getTopAssists(league.id, season)]);
-      body = (
-        <div className="row">
-          <div className="col-main"><Leaders title="Goals" list={scorers.slice(0, 20)} stat={(p) => p.statistics[0]?.goals.total ?? null} /></div>
-          <div className="col-main"><Leaders title="Assists" list={assists.slice(0, 20)} stat={(p) => p.statistics[0]?.goals.assists ?? null} /></div>
-        </div>
-      );
-    }
-  } catch (err) {
-    body = <ErrorNotice error={err} />;
-  }
+  const tableFor = (view: View) =>
+    groups.length === 0 ? (
+      <div className="card empty">The table for {seasonLabel(season)} is not available yet.</div>
+    ) : (
+      <>{groups.map((g, i) => <TableBlock key={i} rows={g} view={view} title={groups.length > 1 ? g[0]?.group : undefined} />)}</>
+    );
+
+  const tablePanel = (
+    <div className="row">
+      <div className="col-main">
+        <ClientTabs
+          label="Table view"
+          variant="chips"
+          useHash={false}
+          tabs={[{ key: "all", label: "All" }, { key: "home", label: "Home" }, { key: "away", label: "Away" }]}
+          panels={{ all: tableFor("all"), home: tableFor("home"), away: tableFor("away") }}
+        />
+      </div>
+      <div className="col-side">
+        <Leaders title="Top scorers" list={scorers.slice(0, 5)} stat={(p) => p.statistics[0]?.goals.total ?? null} />
+      </div>
+    </div>
+  );
+
+  const fixturesPanel = (
+    <div className="row">
+      <div className="col-main"><FixtureList title="Upcoming" list={upcoming} tz={tz} /></div>
+      <div className="col-main"><FixtureList title="Recent results" list={recent} tz={tz} /></div>
+    </div>
+  );
+
+  const playersPanel = (
+    <div className="row">
+      <div className="col-main"><Leaders title="Goals" list={scorers.slice(0, 20)} stat={(p) => p.statistics[0]?.goals.total ?? null} /></div>
+      <div className="col-main"><Leaders title="Assists" list={assists.slice(0, 20)} stat={(p) => p.statistics[0]?.goals.assists ?? null} /></div>
+    </div>
+  );
 
   return (
     <main className="page">
@@ -196,16 +192,15 @@ export default async function LeaguePage({ params, searchParams }: { params: Pro
           <span className="muted">{league.country} · {seasonLabel(season)}</span>
         </div>
       </section>
-      <TabLinks
+      <ClientTabs
         label="League sections"
-        active={tab}
         tabs={[
-          { key: "table", label: "Table", href: base },
-          { key: "fixtures", label: "Fixtures", href: `${base}?tab=fixtures` },
-          { key: "players", label: "Player stats", href: `${base}?tab=players` },
+          { key: "table", label: "Table" },
+          { key: "fixtures", label: "Fixtures" },
+          { key: "players", label: "Player stats" },
         ]}
+        panels={{ table: tablePanel, fixtures: fixturesPanel, players: playersPanel }}
       />
-      {body}
     </main>
   );
 }

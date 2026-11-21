@@ -13,7 +13,7 @@ export default function MyTeams() {
         <p className="muted small" style={{ padding: "12px 20px", margin: 0 }}>Follow teams from their page to see them here.</p>
       ) : (
         teams.map((t) => (
-          <Link key={t.id} href={`/team/${t.id}`} className="list-row">
+          <Link key={t.id} href={`/team/${t.id}/`} className="list-row">
             <Crest src={t.logo} alt="" />
             <span className="grow" style={{ fontWeight: 600 }}>{t.name}</span>
           </Link>

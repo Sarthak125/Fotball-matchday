@@ -1,49 +1,29 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import Crest from "@/components/Crest";
-import ErrorNotice from "@/components/ErrorNotice";
+import NoData from "@/components/NoData";
 import Rating from "@/components/Rating";
-import { getPlayer } from "@/lib/api";
 import { currentSeason, seasonLabel } from "@/lib/config";
+import { getMeta, hasTeamPage, playerIndex } from "@/lib/data";
 import { per90 } from "@/lib/format";
 import { totals } from "@/lib/playerStats";
 import type { PlayerProfile } from "@/lib/types";
 
-export const dynamic = "force-dynamic";
+export const dynamicParams = false;
 
-function parseId(raw: string): number | null {
-  return /^\d{1,10}$/.test(raw) ? Number(raw) : null;
+export function generateStaticParams() {
+  const ids = [...playerIndex().keys()].map((id) => ({ id: String(id) }));
+  return ids.length ? ids : [{ id: "none" }];
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
-  const id = parseId((await params).id);
-  if (!id) return { title: "Player" };
-  try {
-    return { title: (await getPlayer(id))?.player.name ?? "Player" };
-  } catch {
-    return { title: "Player" };
-  }
+  return { title: playerIndex().get(Number((await params).id))?.player.name ?? "Player" };
 }
 
 export default async function PlayerPage({ params }: { params: Promise<{ id: string }> }) {
-  const id = parseId((await params).id);
-  if (!id) notFound();
-  const season = currentSeason();
-
-  let p: PlayerProfile | null = null;
-  try {
-    p = await getPlayer(id, season);
-  } catch (err) {
-    return <main className="page"><ErrorNotice error={err} /></main>;
-  }
-  if (!p) {
-    return (
-      <main className="page narrow">
-        <div className="card empty">No {seasonLabel(season)} data found for this player.</div>
-      </main>
-    );
-  }
+  const p: PlayerProfile | undefined = playerIndex().get(Number((await params).id));
+  const season = getMeta().window?.season ?? currentSeason();
+  if (!p) return <main className="page narrow"><NoData what="player data" /></main>;
 
   const stats = p.statistics.filter((s) => (s.games.appearences ?? 0) > 0 || (s.games.minutes ?? 0) > 0);
   const t = totals(stats);
@@ -68,7 +48,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
         <div className="grow">
           <h1>{p.player.name}</h1>
           <span className="muted">
-            {main && <Link href={`/team/${main.team.id}`}>{main.team.name}</Link>}
+            {main && (hasTeamPage(main.team.id) ? <Link href={`/team/${main.team.id}/`}>{main.team.name}</Link> : main.team.name)}
             {main?.games.position ? ` · ${main.games.position}` : ""}
             {main?.games.number ? ` · #${main.games.number}` : ""}
           </span>
@@ -86,13 +66,13 @@ export default async function PlayerPage({ params }: { params: Promise<{ id: str
             </div>
           ))}
         </div>
-        <Link href={`/compare?a=${p.player.id}`} className="btn">Compare</Link>
+        <Link href={`/compare/?a=${p.player.id}`} className="btn">Compare</Link>
       </section>
 
       {p.player.injured && <div className="alert" role="status">Listed as injured.</div>}
 
       <section aria-label={`${seasonLabel(season)} totals`} className="stack">
-        <h2>{seasonLabel(season)}, all competitions</h2>
+        <h2>{seasonLabel(season)}, covered competitions</h2>
         <div className="tiles">
           <div className="tile"><span className="muted small">Appearances</span><span className="v">{t.apps}</span></div>
           <div className="tile"><span className="muted small">Goals</span><span className="v" style={{ color: "var(--accent)" }}>{t.goals}</span></div>

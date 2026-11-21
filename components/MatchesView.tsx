@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Crest from "./Crest";
 import LocalTime from "./LocalTime";
 import { useFollowedTeams } from "@/lib/follow";
@@ -28,8 +28,31 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: "following", label: "Following" },
 ];
 
-export default function MatchesView({ matches, leagueOrder }: { matches: MatchItem[]; leagueOrder: number[] }) {
+export interface MatchDay {
+  date: string; // YYYY-MM-DD
+  dow: string;
+  label: string;
+  items: MatchItem[];
+}
+
+function browserToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export default function MatchesView({ days, defaultDate, leagueOrder }: { days: MatchDay[]; defaultDate: string; leagueOrder: number[] }) {
   const [filter, setFilter] = useState<Filter>("all");
+  const [date, setDate] = useState(defaultDate);
+  const [today, setToday] = useState(defaultDate);
+  useEffect(() => {
+    const t = browserToday();
+    if (days.some((d) => d.date === t)) {
+      setToday(t);
+      setDate(t);
+    }
+  }, [days]);
+  const matches = useMemo(() => days.find((d) => d.date === date)?.items ?? [], [days, date]);
+  const top = matches.find((m) => m.state === "live") ?? matches.find((m) => m.state === "scheduled") ?? null;
   const { ids: followed } = useFollowedTeams();
   const liveCount = matches.filter((m) => m.state === "live").length;
 
@@ -53,6 +76,35 @@ export default function MatchesView({ matches, leagueOrder }: { matches: MatchIt
 
   return (
     <>
+      <div className="days" role="group" aria-label="Choose a day">
+        {days.map((d) => (
+          <button key={d.date} type="button" className="day" aria-current={d.date === date ? "date" : undefined} aria-pressed={d.date === date} onClick={() => setDate(d.date)}>
+            <span>{d.date === today ? "Today" : d.dow}</span>
+            <span>{d.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {top && (
+        <Link href={`/match/${top.id}/`} className="card pad" style={{ display: "flex", flexDirection: "column", gap: 12, color: "var(--text)", borderColor: "var(--line-strong)" }}>
+          <span style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <span className="label">{top.state === "live" ? "Top match" : "Up next"} · {top.league.name}</span>
+            {top.state === "live" ? <span className="live pill">{top.status}</span> : <span className="muted small"><LocalTime iso={top.kickoffIso} serverText={top.kickoffText} /></span>}
+          </span>
+          <span className="sb-grid">
+            <span className="team-side home" style={{ fontFamily: "var(--font-head)", fontSize: 18 }}>
+              <span>{top.home.name}</span>
+              <Crest src={top.home.logo} alt="" size="md" />
+            </span>
+            <span className="score" style={{ fontSize: 32 }}>{top.state === "scheduled" ? "vs" : `${top.goals.home ?? 0} – ${top.goals.away ?? 0}`}</span>
+            <span className="team-side" style={{ fontFamily: "var(--font-head)", fontSize: 18 }}>
+              <Crest src={top.away.logo} alt="" size="md" />
+              <span>{top.away.name}</span>
+            </span>
+          </span>
+        </Link>
+      )}
+
       <div role="group" aria-label="Filter matches" className="chips">
         {FILTERS.map((f) => (
           <button key={f.key} type="button" className="chip" aria-pressed={filter === f.key} onClick={() => setFilter(f.key)}>
@@ -63,16 +115,18 @@ export default function MatchesView({ matches, leagueOrder }: { matches: MatchIt
 
       {groups.length === 0 && (
         <div className="card empty">
-          {filter === "following" && followed.length === 0
-            ? "You are not following any teams yet. Open a team and press Follow."
-            : "No matches for this filter on this day."}
+          {matches.length === 0
+            ? "No Premier League, La Liga or Champions League matches on this day."
+            : filter === "following" && followed.length === 0
+              ? "You are not following any teams yet. Open a team and press Follow."
+              : "No matches for this filter on this day."}
         </div>
       )}
 
       {groups.map((g) => (
         <section key={g.key} className="card" aria-label={g.name}>
           {g.leagueId ? (
-            <Link href={`/league/${g.leagueId}`} className="group-head">
+            <Link href={`/league/${g.leagueId}/`} className="group-head">
               <Crest src={g.logo} alt="" size="sm" />
               <span>{g.name}</span>
               {g.round && <span className="muted small" style={{ fontWeight: 500 }}>{g.round}</span>}
@@ -88,7 +142,7 @@ export default function MatchesView({ matches, leagueOrder }: { matches: MatchIt
             const showScore = m.state !== "scheduled" && m.goals.home != null;
             return (
               <div key={m.id} className="match-row">
-                <Link href={`/match/${m.id}`} className="match-link" aria-label={`${m.home.name} versus ${m.away.name}`}>
+                <Link href={`/match/${m.id}/`} className="match-link" aria-label={`${m.home.name} versus ${m.away.name}`}>
                   <span>
                     {m.state === "live" && <span className="live">{m.status}</span>}
                     {m.state === "scheduled" && (

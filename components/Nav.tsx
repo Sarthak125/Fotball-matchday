@@ -5,9 +5,9 @@ import { usePathname } from "next/navigation";
 
 const LINKS = [
   { href: "/", label: "Matches", match: (p: string) => p === "/" || p.startsWith("/match") },
-  { href: "/leagues", label: "Leagues", match: (p: string) => p.startsWith("/league") || p.startsWith("/team") || p.startsWith("/player") },
-  { href: "/compare", label: "Compare", match: (p: string) => p.startsWith("/compare") },
-  { href: "/lineup-builder", label: "Lineup Builder", match: (p: string) => p.startsWith("/lineup-builder") },
+  { href: "/leagues/", label: "Leagues", match: (p: string) => p.startsWith("/league") || p.startsWith("/team") || p.startsWith("/player") },
+  { href: "/compare/", label: "Compare", match: (p: string) => p.startsWith("/compare") },
+  { href: "/lineup-builder/", label: "Lineup Builder", match: (p: string) => p.startsWith("/lineup-builder") },
 ];
 
 export default function Nav() {
