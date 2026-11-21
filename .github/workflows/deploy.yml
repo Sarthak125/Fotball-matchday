@@ -48,6 +48,7 @@ jobs:
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
           APP_TIMEZONE: ${{ vars.APP_TIMEZONE }}
           MAX_CALLS_PER_RUN: ${{ vars.MAX_CALLS_PER_RUN }}
+          SEASON: ${{ vars.SEASON }}
         run: |
           if [ "$DATA_MODE" = "demo" ]; then
             echo "Demo mode: using the built-in mock API with fictional data."

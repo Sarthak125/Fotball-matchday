@@ -3,7 +3,7 @@ import Crest from "@/components/Crest";
 import MatchesView, { type MatchDay, type MatchItem } from "@/components/MatchesView";
 import MyTeams from "@/components/MyTeams";
 import NoData from "@/components/NoData";
-import { LEAGUE_IDS, LEAGUES, appTimezone, shiftIsoDate, todayIso } from "@/lib/config";
+import { LEAGUE_IDS, LEAGUES, appTimezone, currentSeason, seasonLabel, shiftIsoDate, todayIso } from "@/lib/config";
 import { getMeta, getStandings, getWindowFixtures } from "@/lib/data";
 import { formatDateLabel, formatKickoff, matchState, signed, statusLabel } from "@/lib/format";
 import type { Fixture } from "@/lib/types";
@@ -46,6 +46,9 @@ export default function MatchesPage() {
   });
 
   const table = getStandings(39);
+  const hasData = LEAGUE_IDS.some((l) => getStandings(l) || getWindowFixtures(l).length);
+  const season = meta.window?.season;
+  const archive = season != null && season < currentSeason();
   const todays = days.find((d) => d.date === today)?.items ?? [];
   const live = todays.filter((m) => m.state === "live");
   const played = todays.filter((m) => m.state === "live" || m.state === "finished");
@@ -68,7 +71,16 @@ export default function MatchesPage() {
         </aside>
 
         <section className="col-main" aria-label="Matches">
-          {!meta.lastRun ? <NoData /> : <MatchesView days={days} defaultDate={today} leagueOrder={[...LEAGUE_IDS]} />}
+          {archive && hasData && (
+            <div className="alert" role="note">
+              <h2>Showing the {seasonLabel(season)} season</h2>
+              <p style={{ margin: 0 }}>
+                Tables, teams and player stats are from {seasonLabel(season)}, so there are no matches this week.
+                Current-season data needs a paid API-Football plan.
+              </p>
+            </div>
+          )}
+          {!hasData ? <NoData /> : <MatchesView days={days} defaultDate={today} leagueOrder={[...LEAGUE_IDS]} />}
         </section>
 
         <aside className="col-side" aria-label="Table and insights">
@@ -101,7 +113,7 @@ export default function MatchesPage() {
             )}
           </section>
 
-          {meta.lastRun && (
+          {hasData && !archive && (
             <section className="card pad stack">
               <h2 style={{ fontSize: 16 }}>Today at a glance</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>

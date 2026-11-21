@@ -55,6 +55,7 @@ Under Settings → Secrets and variables → Actions → **Variables**:
 |---|---|---|
 | `APP_TIMEZONE` | `UTC` | Decides which fixtures count as "today", for example `Asia/Kolkata`. Kick-off times always show in each visitor's own time zone. |
 | `MAX_CALLS_PER_RUN` | `12` | API calls allowed per run. Raise it on a paid plan. |
+| `SEASON` | current season | Start year of the season to show, for example `2024` for 2024/25. Useful on the free API plan, which only covers older seasons. Matches pages are empty for past seasons; tables, teams and players work. |
 | `USE_DEMO_DATA` | (not set) | Set to `true` to publish the built-in demo data (fictional teams and players) instead of real data, for example before you have a key. The site shows a demo banner. Remove it once your key is set. |
 
 To change how often the site updates, edit the `cron` line in `.github/workflows/deploy.yml`.
@@ -63,7 +64,8 @@ To change how often the site updates, edit the `cron` line in `.github/workflows
 
 - API-Football's free plan allows **100 requests a day**. The defaults (every 3 hours, up to 12 calls a run) stay under that. Each run also stops early if the provider reports that few calls are left for the day.
 - For fresher scores, use a paid plan, raise `MAX_CALLS_PER_RUN`, and run the workflow more often. Check current prices and limits on API-Football's site, because they change.
-- I could not confirm whether the free plan includes the current season. If it does not, the workflow log shows the provider's error and the pages stay empty.
+- The free plan does **not** include the current season (the provider answers "Free plans do not have access to this season, try from 2022 to 2024"). For current data you need a paid plan. Otherwise set the `SEASON` variable to an older season such as `2024`.
+- When the provider refuses a season, the run stops after one call so it doesn't waste your quota, and the site explains the problem.
 
 ## Running locally
 

@@ -24,6 +24,7 @@ function read<T>(file: string, fallback: T): T {
 
 export interface Meta {
   lastRun?: string;
+  lastError?: string | null;
   demo?: boolean;
   window?: { from: string; to: string; today: string; timezone: string; season: number };
 }

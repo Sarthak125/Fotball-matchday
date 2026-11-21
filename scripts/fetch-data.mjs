@@ -15,6 +15,8 @@
 //   MIN_REMAINING_DAILY      optional, stop when the provider says fewer calls remain today (default 5)
 //   MIN_INTERVAL_MS          optional, pause between calls to respect per-minute limits (default 6500)
 //   DEMO_DATA                optional, "true" marks the data as demo data
+//   SEASON                   optional, start year of the season to show (e.g. 2024 for 2024/25).
+//                            Defaults to the current season. Free API plans only cover older seasons.
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -87,6 +89,8 @@ let calls = 0;
 let lastCall = 0;
 let dailyRemaining = null;
 let stopReason = null;
+let planError = null;
+let successes = 0;
 
 class BudgetExhausted extends Error {}
 
@@ -120,6 +124,12 @@ async function api(pathname, params) {
   const errors = body.errors && (Array.isArray(body.errors) ? body.errors : Object.values(body.errors));
   if (errors && errors.length) {
     const msg = errors.map(String).join("; ");
+    // The plan does not cover this season: every further call would fail too, so stop now.
+    if (/do not have access|plan/i.test(msg)) {
+      planError = msg;
+      stopReason = msg;
+      throw new BudgetExhausted(msg);
+    }
     // Daily or per-minute limit reached: stop cleanly and keep what we have.
     if (/limit|requests/i.test(msg)) {
       stopReason = msg;
@@ -127,6 +137,7 @@ async function api(pathname, params) {
     }
     throw new Error(`${pathname}: ${msg}`);
   }
+  successes++;
   return body.response;
 }
 
@@ -160,8 +171,17 @@ async function main() {
     await finish(false);
     return;
   }
-  const season = currentSeason();
+  const forced = Number((process.env.SEASON || "").trim());
+  const season = Number.isInteger(forced) && forced >= 2000 && forced <= 2100 ? forced : currentSeason();
   const today = isoToday();
+  // If the season changed since the last run, refetch everything season-specific.
+  if (meta.window?.season != null && meta.window.season !== season) {
+    for (const k of Object.keys(meta.fetchedAt)) if (!k.startsWith("squad/")) delete meta.fetchedAt[k];
+    for (const dir of ["window", "standings", "teams", "topscorers", "season", "topassists"]) {
+      for (const league of LEAGUES) await writeJson(`${dir}/${league}.json`, dir === "standings" ? null : []);
+    }
+    await writeJson("details.json", {});
+  }
   const from = shift(today, -3);
   const to = shift(today, 3);
   console.log(`Season ${season}, window ${from} to ${to} (${TZ}), budget ${MAX_CALLS} calls.`);
@@ -253,7 +273,10 @@ async function main() {
 }
 
 async function finish(fetched) {
-  if (fetched) meta.lastRun = new Date().toISOString();
+  // Only count the run as an update if at least one request worked.
+  if (fetched && successes > 0) meta.lastRun = new Date().toISOString();
+  meta.lastAttempt = new Date().toISOString();
+  meta.lastError = !KEY ? "API_FOOTBALL_KEY is not set." : planError ?? (successes === 0 && problems.length ? problems[0] : null);
   meta.demo = process.env.DEMO_DATA === "true";
   meta.lastRunCalls = calls;
   meta.lastRunProblems = problems;

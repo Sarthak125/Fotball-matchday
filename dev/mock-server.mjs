@@ -214,6 +214,9 @@ createServer((req, res) => {
     res.end(JSON.stringify(body));
   };
   if (!req.headers["x-apisports-key"]) return send({ get: url.pathname, parameters: q, errors: { token: "Missing application key." }, results: 0, response: [] });
+  // MOCK_MAX_SEASON=2024 imitates a free plan that only covers older seasons.
+  const maxSeason = Number(process.env.MOCK_MAX_SEASON);
+  if (maxSeason && q.season && Number(q.season) > maxSeason) return send({ errors: { plan: `Free plans do not have access to this season, try from 2022 to ${maxSeason}.` }, results: 0, response: [] });
   if (q.simulate === "quota") return send({ errors: { requests: "You have reached the request limit for the day." }, results: 0, response: [] });
   const response = route(url.pathname, q);
   if (response === null) return send({ errors: { endpoint: `Unknown endpoint ${url.pathname}` }, results: 0, response: [] });
